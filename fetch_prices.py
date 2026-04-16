@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fetcher de precios para Cartera 1738.
+Fetcher de precios para Carteras 1738 y 6106.
 Corre automáticamente via GitHub Actions todos los días hábiles.
 También puede ejecutarse manualmente: python scripts/fetch_prices.py
 """
@@ -17,20 +17,24 @@ except ImportError:
     os.system(f"{sys.executable} -m pip install yfinance --quiet")
     import yfinance as yf
 
-# ── CONFIGURACIÓN DE LA CARTERA ─────────────────────────────────
-# Si agregás acciones, añadí una entrada acá y en index.html
-PORTFOLIO = [
-    # Acciones argentinas (BCBA) — precio en ARS
-    {"id": "AGRO", "yf": "AGRO.BA", "type": "accion"},
-    {"id": "CEPU", "yf": "CEPU.BA", "type": "accion"},
-    {"id": "CTIO", "yf": "CTIO.BA", "type": "accion"},
-    {"id": "ECOG", "yf": "ECOG.BA", "type": "accion"},
-    {"id": "PAMP", "yf": "PAMP.BA", "type": "accion"},
-    # CEDEARs — precio en USD del subyacente
-    {"id": "ADGO", "yf": "AGRO",    "type": "cedear"},  # Adecoagro
-    {"id": "LAC",  "yf": "LAC",     "type": "cedear"},  # Lithium Americas
-    {"id": "NU",   "yf": "NU",      "type": "cedear"},  # Nu Holdings
-    {"id": "TXR",  "yf": "TX",      "type": "cedear"},  # Ternium
+# ── TICKERS A MONITOREAR ────────────────────────────────────────
+# Todos los tickers únicos entre todas las carteras
+TICKERS = [
+    # Cartera 1738 – Accrogliano Gabriela
+    {"id": "AGRO", "yf": "AGRO.BA"},   # Agrometal (también en 6106)
+    {"id": "CEPU", "yf": "CEPU.BA"},   # Central Puerto
+    {"id": "CTIO", "yf": "CTIO.BA"},   # Consultatio (también en 6106)
+    {"id": "ECOG", "yf": "ECOG.BA"},   # Ecogas
+    {"id": "PAMP", "yf": "PAMP.BA"},   # Pampa Energía
+    {"id": "ADGO", "yf": "AGRO"},      # CEDEAR Adecoagro (NYSE)
+    {"id": "LAC",  "yf": "LAC"},       # CEDEAR Lithium Americas (NYSE)
+    {"id": "NU",   "yf": "NU"},        # CEDEAR Nu Holdings (NYSE)
+    {"id": "TXR",  "yf": "TX"},        # CEDEAR Ternium (NYSE)
+    # Cartera 6106 – Zeida Patricio Eduardo
+    {"id": "AUSO", "yf": "AUSO.BA"},   # Autopistas del Sol
+    {"id": "FERR", "yf": "FERR.BA"},   # Ferrum S.A.
+    {"id": "OEST", "yf": "OEST.BA"},   # Grupo Conc. del Oeste
+    {"id": "B",    "yf": "GOLD"},      # CEDEAR Barrick Gold (NYSE)
 ]
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "prices.json")
@@ -38,7 +42,6 @@ DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "prices.json")
 # ── FUNCIONES ────────────────────────────────────────────────────
 
 def load_existing():
-    """Carga datos existentes como fallback."""
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -46,19 +49,14 @@ def load_existing():
 
 
 def fetch_price(ticker_id, yf_ticker):
-    """Obtiene precio actual y métricas de Yahoo Finance."""
     try:
         t = yf.Ticker(yf_ticker)
         info = t.fast_info
-
         price = getattr(info, "last_price", None)
         prev  = getattr(info, "previous_close", None) or price
-
         if not price:
-            raise ValueError("Sin precio disponible")
-
+            raise ValueError("Sin precio")
         chg_pct = round((price - prev) / prev * 100, 2) if prev else None
-
         return {
             "price":  round(float(price), 4),
             "prev":   round(float(prev), 4) if prev else None,
@@ -78,12 +76,10 @@ def fetch_price(ticker_id, yf_ticker):
 
 
 def fetch_tc():
-    """Intenta obtener tipo de cambio USD/ARS."""
     for sym in ["ARS=X", "USDARS=X"]:
         try:
-            t = yf.Ticker(sym)
-            price = t.fast_info.last_price
-            if price and price > 500:  # Sanity check (TC debería ser > 1000)
+            price = yf.Ticker(sym).fast_info.last_price
+            if price and price > 500:
                 return round(float(price), 0)
         except Exception:
             pass
@@ -91,10 +87,9 @@ def fetch_tc():
 
 
 def _safe(obj_or_val, attr=None, decimals=2):
-    """Helper: obtiene atributo de forma segura."""
     try:
         val = getattr(obj_or_val, attr) if attr else obj_or_val
-        if val is None or (isinstance(val, float) and (val != val)):  # NaN check
+        if val is None or (isinstance(val, float) and val != val):
             return None
         return round(float(val), decimals)
     except Exception:
@@ -104,30 +99,28 @@ def _safe(obj_or_val, attr=None, decimals=2):
 # ── MAIN ─────────────────────────────────────────────────────────
 
 def main():
-    print(f"\n{'='*50}")
+    print(f"\n{'='*55}")
     print(f"  Actualizando precios – {datetime.now().strftime('%d/%m/%Y %H:%M')}")
-    print(f"{'='*50}\n")
+    print(f"  Carteras: 1738 (Accrogliano) + 6106 (Zeida)")
+    print(f"{'='*55}\n")
 
     existing = load_existing()
     prices = {}
     ok_count = 0
 
-    for pos in PORTFOLIO:
-        print(f"📡 {pos['id']} ({pos['yf']})...", end=" ")
-        result = fetch_price(pos["id"], pos["yf"])
-
+    for t in TICKERS:
+        print(f"📡 {t['id']:6s} ({t['yf']:8s})...", end=" ")
+        result = fetch_price(t["id"], t["yf"])
         if result:
-            prices[pos["id"]] = result
-            chg = result.get("chgPct")
-            arrow = "▲" if chg and chg > 0 else ("▼" if chg and chg < 0 else "–")
-            print(f"✅  {result['price']:.4f}  {arrow} {chg or 0:+.2f}%")
+            prices[t["id"]] = result
+            chg = result.get("chgPct") or 0
+            arrow = "▲" if chg > 0 else ("▼" if chg < 0 else "–")
+            print(f"✅  {result['price']:.2f}  {arrow} {chg:+.2f}%")
             ok_count += 1
         else:
-            cached = existing.get("prices", {}).get(pos["id"])
-            prices[pos["id"]] = cached
-            print(f"⚠️  usando datos en caché")
+            prices[t["id"]] = existing.get("prices", {}).get(t["id"])
+            print(f"⚠️  usando caché")
 
-    # Tipo de cambio
     tc = fetch_tc()
     if tc:
         print(f"\n💱 TC USD/ARS: {tc:.0f}")
@@ -135,19 +128,18 @@ def main():
         tc = existing.get("tc", 1395)
         print(f"\n💱 TC: {tc:.0f} (caché)")
 
-    # Guardar
     output = {
-        "updated":  datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "tc":       tc,
-        "prices":   prices,
+        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tc": tc,
+        "prices": prices,
     }
 
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ {ok_count}/{len(PORTFOLIO)} precios actualizados → data/prices.json")
-    print(f"{'='*50}\n")
+    print(f"\n✅ {ok_count}/{len(TICKERS)} precios guardados → data/prices.json")
+    print(f"{'='*55}\n")
 
 
 if __name__ == "__main__":
