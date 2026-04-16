@@ -1,0 +1,47 @@
+name: 📈 Actualizar Precios
+
+on:
+  # Corre automáticamente de lunes a viernes a las 18hs Argentina (21:00 UTC)
+  schedule:
+    - cron: '0 21 * * 1-5'
+
+  # También permite ejecutarlo manualmente desde GitHub → Actions → Run workflow
+  workflow_dispatch:
+
+permissions:
+  contents: write   # Necesario para hacer commit del prices.json actualizado
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Descargar código
+        uses: actions/checkout@v4
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 📦 Instalar dependencias
+        run: pip install yfinance --quiet
+
+      - name: 📡 Obtener precios
+        run: python scripts/fetch_prices.py
+
+      - name: 💾 Guardar en repositorio
+        run: |
+          git config --global user.name  "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add data/prices.json
+          # Solo hace commit si hay cambios
+          if git diff --staged --quiet; then
+            echo "Sin cambios en los precios."
+          else
+            git commit -m "📈 Precios actualizados $(date +'%d/%m/%Y %H:%M') ART"
+            git push
+            echo "✅ prices.json actualizado y publicado."
+          fi
